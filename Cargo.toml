@@ -58,8 +58,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # URL encoding for web search
 urlencoding = "2.1"
 
-# HTML to plain text conversion (web_fetch tool)
-nanohtml2text = "0.2"
+# HTML to markdown/plaintext conversion (web_fetch tool, optional by feature)
+fast_html2md = { version = "0.0.58", optional = true }
+nanohtml2text = { version = "0.2", optional = true }
 
 # Zip archive extraction
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
@@ -178,11 +179,6 @@ probe-rs = { version = "0.31", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 tempfile = "3.14"
 
-# WASM plugin runtime (optional, enable with --features wasm-tools)
-# Uses WASI stdio protocol — tools read JSON from stdin, write JSON to stdout.
-wasmtime = { version = "28", optional = true, default-features = false, features = ["cranelift", "runtime"] }
-wasmtime-wasi = { version = "28", optional = true, default-features = false, features = ["preview1"] }
-
 # Terminal QR rendering for WhatsApp Web pairing flow.
 qrcode = { version = "0.14", optional = true }
 
@@ -205,7 +201,7 @@ landlock = { version = "0.4", optional = true }
 libc = "0.2"
 
 [features]
-default = ["wasm-tools"]
+default = ["channel-lark", "web-fetch-html2md"]
 hardware = ["nusb", "tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]
 channel-lark = ["dep:prost"]
@@ -227,8 +223,11 @@ landlock = ["sandbox-landlock"]
 probe = ["dep:probe-rs"]
 # rag-pdf = PDF ingestion for datasheet RAG
 rag-pdf = ["dep:pdf-extract"]
-# wasm-tools = WASM plugin engine for dynamically-loaded tool packages (WASI stdio protocol)
-wasm-tools = ["dep:wasmtime", "dep:wasmtime-wasi"]
+# web-fetch HTML conversion backends (mutually exclusive; html2md is the default)
+web-fetch-html2md = ["dep:fast_html2md"]
+web-fetch-plaintext = ["dep:nanohtml2text"]
+# wasm-tools = stub feature name kept for backward compat; actual WASM runtime is runtime-wasm (wasmi)
+wasm-tools = []
 # whatsapp-web = Native WhatsApp Web client with custom rusqlite storage backend
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
 
