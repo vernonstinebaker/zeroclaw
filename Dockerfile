@@ -67,7 +67,7 @@ RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/regist
     strip /app/zeroclaw
 
 # Prepare runtime directory structure and default config inline (no extra stage)
-RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace && \
+RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace/bin && \
     cat > /zeroclaw-data/.zeroclaw/config.toml <<EOF && \
     chown -R 65534:65534 /zeroclaw-data
 workspace_dir = "/zeroclaw-data/workspace"
@@ -81,6 +81,15 @@ default_temperature = 0.7
 port = 42617
 host = "127.0.0.1"
 allow_public_bind = false
+
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+name = "webdav"
+transport = "stdio"
+command = "/usr/local/bin/webdav-mcp"
+args = []
 EOF
 
 # ── Stage 2: Development Runtime (Debian) ────────────────────
@@ -94,6 +103,10 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /zeroclaw-data /zeroclaw-data
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
+
+# Install webdav-mcp MCP server (pre-compiled static musl binary)
+COPY workspace/bin/webdav-mcp-linux-x86_64 /usr/local/bin/webdav-mcp
+RUN chmod +x /usr/local/bin/webdav-mcp
 
 # Overwrite minimal config with DEV template (Ollama defaults)
 COPY dev/config.template.toml /zeroclaw-data/.zeroclaw/config.toml
@@ -122,6 +135,10 @@ FROM gcr.io/distroless/cc-debian13:nonroot@sha256:84fcd3c223b144b0cb6edc5ecc7564
 
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
 COPY --from=builder /zeroclaw-data /zeroclaw-data
+
+# Install webdav-mcp MCP server (pre-compiled static musl binary)
+# Note: distroless has no shell, but static musl binaries run fine without one.
+COPY workspace/bin/webdav-mcp-linux-x86_64 /usr/local/bin/webdav-mcp
 
 # Environment setup
 ENV ZEROCLAW_WORKSPACE=/zeroclaw-data/workspace

@@ -10,3 +10,14 @@ default_temperature = 0.7
 port = 42617
 host = "127.0.0.1"
 allow_public_bind = false
+
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+name = "webdav"
+transport = "stdio"
+command = "/usr/local/bin/webdav-mcp"
+args = []
+# WEBDAV_URL, WEBDAV_USER, WEBDAV_PASS are inherited from the container environment.
+# Set them via docker-compose.override.yml or .env.

@@ -36,3 +36,7 @@ credentials.json
 
 # Nix
 result
+
+# Pre-compiled third-party MCP binaries (copied during docker build, not tracked in git)
+workspace/bin/*
+!workspace/bin/.gitkeep
