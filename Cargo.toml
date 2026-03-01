@@ -60,7 +60,7 @@ urlencoding = "2.1"
 
 # HTML to markdown/plaintext conversion (web_fetch tool, optional by feature)
 fast_html2md = { version = "0.0.58", optional = true }
-nanohtml2text = { version = "0.2", optional = true }
+nanohtml2text = "0.2"
 
 # Zip archive extraction
 zip = { version = "8.1", default-features = false, features = ["deflate"] }
