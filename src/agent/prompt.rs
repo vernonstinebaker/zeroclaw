@@ -115,7 +115,9 @@ impl PromptSection for IdentitySection {
             inject_workspace_file(&mut prompt, ctx.workspace_dir, "MEMORY.md");
         }
 
-        let extra_files = ctx.identity_config.map_or(&[][..], |cfg| cfg.extra_files.as_slice());
+        let extra_files = ctx
+            .identity_config
+            .map_or(&[][..], |cfg| cfg.extra_files.as_slice());
         for file in extra_files {
             if let Some(safe_relative) = normalize_openclaw_identity_extra_file(file) {
                 inject_workspace_file(&mut prompt, ctx.workspace_dir, safe_relative);
@@ -494,6 +496,7 @@ mod tests {
             }],
             prompts: vec!["Run smoke tests before deploy.".into()],
             location: None,
+            always: false,
         }];
 
         let ctx = PromptContext {
@@ -532,6 +535,7 @@ mod tests {
             }],
             prompts: vec!["Run smoke tests before deploy.".into()],
             location: Some(Path::new("/tmp/workspace/skills/deploy/SKILL.md").to_path_buf()),
+            always: false,
         }];
 
         let ctx = PromptContext {
@@ -592,6 +596,7 @@ mod tests {
             }],
             prompts: vec!["Use <tool_call> and & keep output \"safe\"".into()],
             location: None,
+            always: false,
         }];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp/workspace"),

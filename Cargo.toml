@@ -63,7 +63,7 @@ fast_html2md = { version = "0.0.58", optional = true }
 nanohtml2text = { version = "0.2", optional = true }
 
 # Zip archive extraction
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+zip = { version = "8.1", default-features = false, features = ["deflate"] }
 
 # XML parsing (DOCX text extraction)
 quick-xml = "0.37"
@@ -111,7 +111,7 @@ prost = { version = "0.14", default-features = false, features = ["derive"], opt
 # Memory / persistence
 rusqlite = { version = "0.37", features = ["bundled"] }
 postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
-tokio-postgres-rustls = { version = "0.12", optional = true }
+tokio-postgres-rustls = { version = "0.13", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 cron = "0.15"
@@ -179,6 +179,13 @@ probe-rs = { version = "0.31", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 tempfile = "3.14"
 
+
+# WASM plugin runtime (optional, enable with --features wasm-tools)
+# Uses WASI stdio protocol — tools read JSON from stdin, write JSON to stdout.
+wasmtime = { version = "36.0.6", optional = true, default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "36.0.6", optional = true, default-features = false, features = ["preview1"] }
+
+
 # Terminal QR rendering for WhatsApp Web pairing flow.
 qrcode = { version = "0.14", optional = true }
 
@@ -201,7 +208,8 @@ landlock = { version = "0.4", optional = true }
 libc = "0.2"
 
 [features]
-default = ["channel-lark", "web-fetch-html2md"]
+# Keep default minimal for widest host compatibility (including macOS 10.15).
+default = []
 hardware = ["nusb", "tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]
 channel-lark = ["dep:prost"]
@@ -223,13 +231,15 @@ landlock = ["sandbox-landlock"]
 probe = ["dep:probe-rs"]
 # rag-pdf = PDF ingestion for datasheet RAG
 rag-pdf = ["dep:pdf-extract"]
-# web-fetch HTML conversion backends (mutually exclusive; html2md is the default)
-web-fetch-html2md = ["dep:fast_html2md"]
-web-fetch-plaintext = ["dep:nanohtml2text"]
-# wasm-tools = stub feature name kept for backward compat; actual WASM runtime is runtime-wasm (wasmi)
-wasm-tools = []
+# wasm-tools = WASM plugin engine for dynamically-loaded tool packages (WASI stdio protocol)
+# Runtime implementation is active on Linux/macOS/Windows; unsupported targets use stubs.
+wasm-tools = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # whatsapp-web = Native WhatsApp Web client with custom rusqlite storage backend
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
+# Optional provider feature flags used by cfg(feature = "...") guards.
+# Keep disabled by default to preserve current runtime behavior.
+firecrawl = []
+web-fetch-html2md = []
 
 [profile.release]
 opt-level = "z"      # Optimize for size
