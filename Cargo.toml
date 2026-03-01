@@ -58,8 +58,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # URL encoding for web search
 urlencoding = "2.1"
 
-# HTML to markdown/plaintext conversion (web_fetch tool, optional by feature)
-fast_html2md = { version = "0.0.58", optional = true }
+# HTML to plain text conversion (web_fetch tool)
 nanohtml2text = "0.2"
 
 # Zip archive extraction
@@ -179,12 +178,10 @@ probe-rs = { version = "0.31", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 tempfile = "3.14"
 
-
 # WASM plugin runtime (optional, enable with --features wasm-tools)
 # Uses WASI stdio protocol — tools read JSON from stdin, write JSON to stdout.
 wasmtime = { version = "36.0.6", optional = true, default-features = false, features = ["cranelift", "runtime"] }
 wasmtime-wasi = { version = "36.0.6", optional = true, default-features = false, features = ["preview1"] }
-
 
 # Terminal QR rendering for WhatsApp Web pairing flow.
 qrcode = { version = "0.14", optional = true }

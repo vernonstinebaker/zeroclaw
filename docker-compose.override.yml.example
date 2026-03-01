@@ -1,0 +1,22 @@
+# docker-compose.override.yml.example
+#
+# Local dev overrides for the webdav-mcp integration.
+# Copy to docker-compose.override.yml (gitignored) and fill in your values.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Then run:
+#   docker compose up --build -d
+
+services:
+  zeroclaw:
+    build:
+      context: .
+      target: dev
+    image: zeroclaw-dev
+    environment:
+      # WebDAV credentials for the webdav-mcp MCP server.
+      # The server binary is baked into the dev image at /usr/local/bin/webdav-mcp.
+      - WEBDAV_URL=${WEBDAV_URL:-http://100.110.80.108:8080}
+      - WEBDAV_USER=${WEBDAV_USER:-bot}
+      - WEBDAV_PASS=${WEBDAV_PASS:-bot}
