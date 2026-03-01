@@ -15,8 +15,44 @@ services:
       target: dev
     image: zeroclaw-dev
     environment:
+      # Required: LLM provider API key (or set in .env)
+      - API_KEY=${API_KEY:-}
+      - PROVIDER=${PROVIDER:-}
+      - ZEROCLAW_MODEL=${ZEROCLAW_MODEL:-}
+      - ZEROCLAW_ALLOW_PUBLIC_BIND=true
       # WebDAV credentials for the webdav-mcp MCP server.
       # The server binary is baked into the dev image at /usr/local/bin/webdav-mcp.
-      - WEBDAV_URL=${WEBDAV_URL:-http://100.110.80.108:8080}
+      - WEBDAV_URL=${WEBDAV_URL:-http://change-me:8080}
       - WEBDAV_USER=${WEBDAV_USER:-bot}
       - WEBDAV_PASS=${WEBDAV_PASS:-bot}
+
+    # Run as root to patch config, then drop to nobody for the daemon.
+    user: "0:0"
+
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # Idempotently ensure MCP is enabled and webdav server is configured in config.toml.
+        # The volume may pre-date this config addition; this patch survives rebuilds.
+        CONFIG=/zeroclaw-data/.zeroclaw/config.toml
+        if [ -f "$$CONFIG" ]; then
+          # Enable MCP if the block exists but is disabled; add block if missing entirely.
+          if grep -q '^\[mcp\]' "$$CONFIG"; then
+            sed -i '/^\[mcp\]/,/^\[/{s/^enabled = false/enabled = true/}' "$$CONFIG"
+          else
+            printf '\n[mcp]\nenabled = true\n' >> "$$CONFIG"
+          fi
+          # Append webdav server entry if not already present.
+          # Uses sed to replace inline 'servers = []' with the table-array block
+          # so TOML section ordering stays valid.
+          if ! grep -q 'name = "webdav"' "$$CONFIG"; then
+            echo "Patching webdav MCP server into $$CONFIG"
+            sed -i '/^\[mcp\]/,/^\[/{s/^servers = \[\]/[[mcp.servers]]\nname = "webdav"\ntransport = "stdio"\ncommand = "\/usr\/local\/bin\/webdav-mcp"\nargs = []/}' "$$CONFIG"
+            if ! grep -q 'name = "webdav"' "$$CONFIG"; then
+              printf '\n[[mcp.servers]]\nname = "webdav"\ntransport = "stdio"\ncommand = "/usr/local/bin/webdav-mcp"\nargs = []\n' >> "$$CONFIG"
+            fi
+          fi
+        fi
+        chown -R nobody:nogroup /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace 2>/dev/null || true
+        exec su -s /bin/sh -c 'exec zeroclaw daemon --port 42617 --host "[::]"' nobody
