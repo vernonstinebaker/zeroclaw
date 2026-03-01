@@ -1435,6 +1435,15 @@ pub fn handle_command(command: crate::SkillCommands, config: &crate::config::Con
             );
             Ok(())
         }
+        crate::SkillCommands::New { .. } => {
+            anyhow::bail!("'skills new' is not yet implemented");
+        }
+        crate::SkillCommands::Test { .. } => {
+            anyhow::bail!("'skills test' is not yet implemented");
+        }
+        crate::SkillCommands::Templates => {
+            anyhow::bail!("'skills templates' is not yet implemented");
+        }
     }
 }
 
