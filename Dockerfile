@@ -95,6 +95,7 @@ EOF
 
 # ── Stage 2: Development Runtime (Debian) ────────────────────
 FROM debian:trixie-slim@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba AS dev
+ARG TARGETARCH
 
 # Install essential runtime dependencies only (use docker-compose.override.yml for dev tools)
 RUN apt-get update && apt-get install -y \
@@ -105,8 +106,8 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /zeroclaw-data /zeroclaw-data
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
 
-# Install webdav-mcp MCP server (pre-compiled static musl binary)
-COPY workspace/bin/webdav-mcp-linux-x86_64 /usr/local/bin/webdav-mcp
+# Install webdav-mcp MCP server (pre-compiled static musl binary, architecture-matched)
+COPY workspace/bin/webdav-mcp-linux-${TARGETARCH} /usr/local/bin/webdav-mcp
 RUN chmod +x /usr/local/bin/webdav-mcp
 
 # Overwrite minimal config with DEV template (Ollama defaults)
@@ -133,13 +134,14 @@ CMD ["gateway"]
 
 # ── Stage 3: Production Runtime (Distroless) ─────────────────
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:84fcd3c223b144b0cb6edc5ecc75641819842a9679a3a58fd6294bec47532bf7 AS release
+ARG TARGETARCH
 
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
 COPY --from=builder /zeroclaw-data /zeroclaw-data
 
-# Install webdav-mcp MCP server (pre-compiled static musl binary)
+# Install webdav-mcp MCP server (pre-compiled static musl binary, architecture-matched)
 # Note: distroless has no shell, but static musl binaries run fine without one.
-COPY workspace/bin/webdav-mcp-linux-x86_64 /usr/local/bin/webdav-mcp
+COPY workspace/bin/webdav-mcp-linux-${TARGETARCH} /usr/local/bin/webdav-mcp
 
 # Environment setup
 ENV ZEROCLAW_WORKSPACE=/zeroclaw-data/workspace
