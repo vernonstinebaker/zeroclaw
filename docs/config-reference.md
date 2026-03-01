@@ -89,7 +89,7 @@ Operational note for container users:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `compact_context` | `true` | When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models |
+| `compact_context` | `false` | When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models |
 | `max_tool_iterations` | `20` | Maximum tool-call loop turns per user message across CLI, gateway, and channels |
 | `max_history_messages` | `50` | Maximum conversation history messages retained per session |
 | `parallel_tools` | `false` | Enable parallel tool execution within a single iteration |
@@ -148,31 +148,6 @@ Notes:
 - Corrupted/unreadable estop state falls back to fail-closed `kill_all`.
 - Use CLI command `zeroclaw estop` to engage and `zeroclaw estop resume` to clear levels.
 
-## `[security.url_access]`
-
-| Key | Default | Purpose |
-|---|---|---|
-| `block_private_ip` | `true` | Block local/private/link-local/multicast addresses by default |
-| `allow_cidrs` | `[]` | CIDR ranges allowed to bypass private-IP blocking (`100.64.0.0/10`, `198.18.0.0/15`) |
-| `allow_domains` | `[]` | Domain patterns that bypass private-IP blocking before DNS checks (`internal.example`, `*.svc.local`) |
-| `allow_loopback` | `false` | Permit loopback targets (`localhost`, `127.0.0.1`, `::1`) |
-
-Notes:
-
-- This policy is shared by `browser_open`, `http_request`, and `web_fetch`.
-- Tool-level allowlists still apply. `allow_domains` / `allow_cidrs` only override private/local blocking.
-- DNS rebinding protection remains enabled: resolved local/private IPs are denied unless explicitly allowlisted.
-
-Example:
-
-```toml
-[security.url_access]
-block_private_ip = true
-allow_cidrs = ["100.64.0.0/10", "198.18.0.0/15"]
-allow_domains = ["internal.example", "*.svc.local"]
-allow_loopback = false
-```
-
 ## `[security.syscall_anomaly]`
 
 | Key | Default | Purpose |
@@ -207,36 +182,6 @@ max_alerts_per_minute = 30
 alert_cooldown_secs = 20
 log_path = "syscall-anomalies.log"
 baseline_syscalls = ["read", "write", "openat", "close", "execve", "futex"]
-```
-
-## `[security.perplexity_filter]`
-
-Lightweight, opt-in adversarial suffix filter that runs before provider calls in channel and gateway message pipelines.
-
-| Key | Default | Purpose |
-|---|---|---|
-| `enable_perplexity_filter` | `false` | Enable pre-LLM statistical suffix anomaly blocking |
-| `perplexity_threshold` | `18.0` | Character-class bigram perplexity threshold |
-| `suffix_window_chars` | `64` | Trailing character window used for anomaly scoring |
-| `min_prompt_chars` | `32` | Minimum prompt length before filter is evaluated |
-| `symbol_ratio_threshold` | `0.20` | Minimum punctuation ratio in suffix window for blocking |
-
-Notes:
-
-- This filter is disabled by default to preserve baseline latency/behavior.
-- The detector combines character-class perplexity with GCG-like token heuristics.
-- Inputs are blocked only when anomaly conditions are met; normal natural-language prompts pass.
-- Typical per-message overhead is designed to stay under `50ms` in debug-safe local tests and substantially lower in release builds.
-
-Example:
-
-```toml
-[security.perplexity_filter]
-enable_perplexity_filter = true
-perplexity_threshold = 16.5
-suffix_window_chars = 72
-min_prompt_chars = 40
-symbol_ratio_threshold = 0.25
 ```
 
 ## `[agents.<name>]`
@@ -397,7 +342,6 @@ Notes:
 | `open_skills_enabled` | `false` | Opt-in loading/sync of community `open-skills` repository |
 | `open_skills_dir` | unset | Optional local path for `open-skills` (defaults to `$HOME/open-skills` when enabled) |
 | `prompt_injection_mode` | `full` | Skill prompt verbosity: `full` (inline instructions/tools) or `compact` (name/description/location only) |
-| `clawhub_token` | unset | Optional Bearer token for authenticated ClawhHub skill downloads |
 
 Notes:
 
@@ -409,14 +353,15 @@ Notes:
 - Precedence for enable flag: `ZEROCLAW_OPEN_SKILLS_ENABLED` → `skills.open_skills_enabled` in `config.toml` → default `false`.
 - `prompt_injection_mode = "compact"` is recommended on low-context local models to reduce startup prompt size while keeping skill files available on demand.
 - Skill loading and `zeroclaw skills install` both apply a static security audit. Skills that contain symlinks, script-like files, high-risk shell payload snippets, or unsafe markdown link traversal are rejected.
-- `clawhub_token` is sent as `Authorization: Bearer <token>` when downloading from ClawhHub. Obtain a token from [https://clawhub.ai](https://clawhub.ai) after signing in. Required if the API returns 429 (rate-limited) or 401 (unauthorized) for anonymous requests.
-
-**ClawhHub token example:**
-
-```toml
-[skills]
-clawhub_token = "your-token-here"
-```
+- URL-based installs enforce first-seen domain trust. On first download from an unseen domain, ZeroClaw prompts for trust and persists the decision.
+- Download-source aliases and trust decisions are stored in `<workspace>/skills/.download-policy.toml`:
+  - `aliases`: user-editable source shortcuts.
+  - `trusted_domains`: domain allowlist for future URL installs.
+  - `blocked_domains`: domains explicitly denied.
+- Default aliases are preloaded for:
+  - `find-skills` → `https://skills.sh/vercel-labs/skills/find-skills`
+  - `skill-creator` → `https://skills.sh/anthropics/skills/skill-creator`
+- For transparency, built-in default skill sources are committed under repo `/skills/` and copied into each workspace `skills/` directory during initialization.
 
 ## `[composio]`
 
@@ -485,8 +430,8 @@ Notes:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `enabled` | `false` | Enable browser tools (`browser_open` and `browser`) |
-| `allowed_domains` | `[]` | Allowed domains for `browser_open` and `browser` (exact/subdomain match, or `"*"` for all public domains) |
+| `enabled` | `false` | Enable `browser_open` tool (opens URLs in the system browser without scraping) |
+| `allowed_domains` | `[]` | Allowed domains for `browser_open` (exact/subdomain match, or `"*"` for all public domains) |
 | `session_name` | unset | Browser session name (for agent-browser automation) |
 | `backend` | `agent_browser` | Browser automation backend: `"agent_browser"`, `"rust_native"`, `"computer_use"`, or `"auto"` |
 | `native_headless` | `true` | Headless mode for rust-native backend |
@@ -507,7 +452,6 @@ Notes:
 
 Notes:
 
-- `browser_open` is a simple URL opener; `browser` is full browser automation (open/click/type/scroll/screenshot).
 - When `backend = "computer_use"`, the agent delegates browser actions to the sidecar at `computer_use.endpoint`.
 - `allow_remote_endpoint = false` (default) rejects any non-loopback endpoint to prevent accidental public exposure.
 - Use `window_allowlist` to restrict which OS windows the sidecar can interact with.
@@ -520,52 +464,12 @@ Notes:
 | `allowed_domains` | `[]` | Allowed domains for HTTP requests (exact/subdomain match, or `"*"` for all public domains) |
 | `max_response_size` | `1000000` | Maximum response size in bytes (default: 1 MB) |
 | `timeout_secs` | `30` | Request timeout in seconds |
-| `user_agent` | `ZeroClaw/1.0` | User-Agent header for outbound HTTP requests |
 
 Notes:
 
 - Deny-by-default: if `allowed_domains` is empty, all HTTP requests are rejected.
 - Use exact domain or subdomain matching (e.g. `"api.example.com"`, `"example.com"`), or `"*"` to allow any public domain.
 - Local/private targets are still blocked even when `"*"` is configured.
-- Shell `curl`/`wget` are classified as high-risk and may be blocked by autonomy policy. Prefer `http_request` for direct HTTP calls.
-
-## `[web_fetch]`
-
-| Key | Default | Purpose |
-|---|---|---|
-| `enabled` | `false` | Enable `web_fetch` for page-to-text extraction |
-| `provider` | `fast_html2md` | Fetch/render backend: `fast_html2md`, `nanohtml2text`, `firecrawl` |
-| `api_key` | unset | API key for provider backends that require it (e.g. `firecrawl`) |
-| `api_url` | unset | Optional API URL override (self-hosted/alternate endpoint) |
-| `allowed_domains` | `["*"]` | Domain allowlist (`"*"` allows all public domains) |
-| `blocked_domains` | `[]` | Denylist applied before allowlist |
-| `max_response_size` | `500000` | Maximum returned payload size in bytes |
-| `timeout_secs` | `30` | Request timeout in seconds |
-| `user_agent` | `ZeroClaw/1.0` | User-Agent header for fetch requests |
-
-Notes:
-
-- `web_fetch` is optimized for summarization/data extraction from web pages.
-- Redirect targets are revalidated against allow/deny domain policy.
-- Local/private network targets remain blocked even when `allowed_domains = ["*"]`.
-
-## `[web_search]`
-
-| Key | Default | Purpose |
-|---|---|---|
-| `enabled` | `false` | Enable `web_search_tool` |
-| `provider` | `duckduckgo` | Search backend: `duckduckgo`, `brave`, `firecrawl` |
-| `api_key` | unset | Generic provider key (used by `firecrawl`, fallback for `brave`) |
-| `api_url` | unset | Optional API URL override |
-| `brave_api_key` | unset | Dedicated Brave key (required for `provider = "brave"` unless `api_key` is set) |
-| `max_results` | `5` | Maximum search results returned (clamped to 1-10) |
-| `timeout_secs` | `15` | Request timeout in seconds |
-| `user_agent` | `ZeroClaw/1.0` | User-Agent header for search requests |
-
-Notes:
-
-- If DuckDuckGo returns `403`/`429` in your network, switch provider to `brave` or `firecrawl`.
-- `web_search` finds candidate URLs; pair it with `web_fetch` for page content extraction.
 
 ## `[gateway]`
 
