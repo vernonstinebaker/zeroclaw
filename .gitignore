@@ -41,4 +41,4 @@ result
 workspace/bin/*
 !workspace/bin/.gitkeep
 !workspace/bin/webdav-mcp-linux-amd64
-!workspace/bin/webdav-mcp-linux-aarch64
+!workspace/bin/webdav-mcp-linux-arm64
