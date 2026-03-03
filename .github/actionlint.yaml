@@ -2,3 +2,9 @@ self-hosted-runner:
     labels:
         - blacksmith-2vcpu-ubuntu-2404
         - aws-india
+        - light
+        - cpu40
+        - codeql
+        - codeql-general
+        - blacksmith-2vcpu-ubuntu-2404
+        - hetzner
