@@ -1022,6 +1022,40 @@ impl Default for SubAgentsConfig {
     }
 }
 
+// ── Per-turn MCP tool filter groups ────────────────────────────────────────
+
+/// Mode for a [`ToolFilterGroup`] entry.
+///
+/// - `always`:  tools matching the `tools` patterns are always included in the
+///              LLM schema, regardless of the user message.
+/// - `dynamic`: tools matching the `tools` patterns are included only when the
+///              user message contains at least one of the `keywords` entries
+///              (case-insensitive substring match).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolFilterGroupMode {
+    Always,
+    Dynamic,
+}
+
+/// A single entry in `agent.tool_filter_groups`.
+///
+/// Controls which MCP tools are visible to the LLM on a per-turn basis.
+/// Built-in (non-MCP) tools are never filtered.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ToolFilterGroup {
+    /// Filter mode: `"always"` or `"dynamic"`.
+    pub mode: ToolFilterGroupMode,
+    /// Glob patterns matched against tool names (e.g. `"mcp_vikunja_*"`).
+    /// Supports a single `*` wildcard only.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Keywords for `dynamic` mode — case-insensitive substring match against
+    /// the user message.  Ignored when `mode` is `"always"`.
+    #[serde(default)]
+    pub keywords: Vec<String>,
+}
+
 /// Agent orchestration configuration (`[agent]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentConfig {
@@ -1051,6 +1085,35 @@ pub struct AgentConfig {
     /// Applied after `allowed_tools`.
     #[serde(default)]
     pub denied_tools: Vec<String>,
+    /// Per-turn MCP tool schema filtering.
+    ///
+    /// When non-empty, controls which MCP tools are included in the schema sent
+    /// to the LLM each turn.  Built-in (non-MCP) tools always pass through
+    /// regardless of any filter groups.  If this list is empty, all tools are
+    /// included as-is (backward-compatible default).
+    ///
+    /// Two modes per group:
+    ///   - `always`:  tools matching the `tools` patterns are always included.
+    ///   - `dynamic`: tools matching the `tools` patterns are included only when
+    ///                the user message contains at least one `keywords` entry
+    ///                (case-insensitive substring match).
+    ///
+    /// Glob patterns support a single `*` wildcard (prefix/suffix/infix),
+    /// e.g. `"mcp_vikunja_*"`.
+    ///
+    /// Example:
+    /// ```toml
+    /// [[agent.tool_filter_groups]]
+    /// mode = "always"
+    /// tools = ["mcp_webdav_*"]
+    ///
+    /// [[agent.tool_filter_groups]]
+    /// mode = "dynamic"
+    /// keywords = ["task", "todo"]
+    /// tools = ["mcp_vikunja_*"]
+    /// ```
+    #[serde(default)]
+    pub tool_filter_groups: Vec<ToolFilterGroup>,
     /// Agent-team runtime controls for synchronous delegation.
     #[serde(default)]
     pub teams: AgentTeamsConfig,
@@ -1188,6 +1251,7 @@ impl Default for AgentConfig {
             tool_dispatcher: default_agent_tool_dispatcher(),
             allowed_tools: Vec::new(),
             denied_tools: Vec::new(),
+            tool_filter_groups: Vec::new(),
             teams: AgentTeamsConfig::default(),
             subagents: SubAgentsConfig::default(),
             loop_detection_no_progress_threshold: default_loop_detection_no_progress_threshold(),

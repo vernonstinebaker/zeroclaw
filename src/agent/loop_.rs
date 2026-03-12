@@ -369,6 +369,8 @@ tokio::task_local! {
     static SAFETY_HEARTBEAT_CONFIG: Option<SafetyHeartbeatConfig>;
     static TOOL_LOOP_PROGRESS_MODE: ProgressMode;
     static TOOL_LOOP_COST_ENFORCEMENT_CONTEXT: Option<CostEnforcementContext>;
+    /// Per-turn MCP tool filter groups propagated from agent config.
+    static TOOL_FILTER_GROUPS: Vec<crate::config::schema::ToolFilterGroup>;
 }
 
 /// Configuration for periodic safety-constraint re-injection (heartbeat).
@@ -378,6 +380,95 @@ pub(crate) struct SafetyHeartbeatConfig {
     pub body: String,
     /// Inject a heartbeat every `interval` tool iterations (0 = disabled).
     pub interval: usize,
+}
+
+// ── Per-turn MCP tool filter helpers ────────────────────────────────────────
+
+/// Returns `true` if `name` matches `pattern` using simple single-`*` glob.
+///
+/// Rules:
+///  - `"*"` matches everything.
+///  - No `*` → exact match.
+///  - One `*` → prefix before `*` must match start of `name`, suffix after `*`
+///    must match end of `name`.
+///
+/// Multiple `*` characters are not supported; only the first `*` is treated as
+/// a wildcard and the rest of the pattern after it is treated as a literal suffix.
+pub(crate) fn glob_match(pattern: &str, name: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    match pattern.find('*') {
+        None => pattern == name,
+        Some(star) => {
+            let prefix = &pattern[..star];
+            let suffix = &pattern[star + 1..];
+            if !name.starts_with(prefix) {
+                return false;
+            }
+            if suffix.is_empty() {
+                return true;
+            }
+            // suffix must appear at the end (single-`*` semantics only)
+            let min_len = prefix.len() + suffix.len();
+            name.len() >= min_len && name.ends_with(suffix)
+        }
+    }
+}
+
+/// Filter `tool_specs` for the current turn based on `tool_filter_groups`.
+///
+/// Rules (mirrors NullClaw `filterToolSpecsForTurn`):
+///   - If `tool_filter_groups` is empty, returns all specs unchanged.
+///   - A tool whose name does **not** start with `"mcp_"` is always included
+///     (built-in tools are never filtered).
+///   - `always` groups unconditionally include matching MCP tools.
+///   - `dynamic` groups include matching MCP tools when `user_message` contains
+///     at least one of the group's `keywords` (case-insensitive substring match).
+pub(crate) fn filter_tool_specs_for_turn<'a>(
+    tool_specs: &'a [crate::tools::ToolSpec],
+    groups: &[crate::config::schema::ToolFilterGroup],
+    user_message: &str,
+) -> Vec<&'a crate::tools::ToolSpec> {
+    use crate::config::schema::ToolFilterGroupMode;
+
+    if groups.is_empty() {
+        return tool_specs.iter().collect();
+    }
+
+    let user_message_lower = user_message.to_ascii_lowercase();
+
+    tool_specs
+        .iter()
+        .filter(|spec| {
+            // Non-MCP tools always pass through.
+            if !spec.name.starts_with("mcp_") {
+                return true;
+            }
+
+            for group in groups {
+                // Check if any pattern in this group matches the tool name.
+                let pattern_matched = group.tools.iter().any(|pat| glob_match(pat, &spec.name));
+                if !pattern_matched {
+                    continue;
+                }
+
+                match group.mode {
+                    ToolFilterGroupMode::Always => return true,
+                    ToolFilterGroupMode::Dynamic => {
+                        let keyword_hit = group
+                            .keywords
+                            .iter()
+                            .any(|kw| user_message_lower.contains(&kw.to_ascii_lowercase()));
+                        if keyword_hit {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -1198,7 +1289,22 @@ pub async fn run_tool_call_loop(
         .filter(|tool| !excluded_tools.iter().any(|ex| ex == tool.name()))
         .map(|tool| tool.spec())
         .collect();
-    let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
+    let tool_filter_groups = TOOL_FILTER_GROUPS
+        .try_with(Clone::clone)
+        .unwrap_or_default();
+    // Extract the last user message from history for dynamic keyword matching.
+    let last_user_message: String = history
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    let filtered_tool_specs: Vec<crate::tools::ToolSpec> =
+        filter_tool_specs_for_turn(&tool_specs, &tool_filter_groups, &last_user_message)
+            .into_iter()
+            .cloned()
+            .collect();
+    let use_native_tools = provider.supports_native_tools() && !filtered_tool_specs.is_empty();
     let turn_id = Uuid::new_v4().to_string();
     let mut seen_tool_signatures: HashSet<(String, String)> = HashSet::new();
     let mut missing_tool_call_retry_used = false;
@@ -1304,7 +1410,7 @@ pub async fn run_tool_call_loop(
         // Unified path via Provider::chat so provider-specific native tool logic
         // (OpenAI/Anthropic/OpenRouter/compatible adapters) is honored.
         let request_tools = if use_native_tools {
-            Some(tool_specs.as_slice())
+            Some(filtered_tool_specs.as_slice())
         } else {
             None
         };
@@ -1901,7 +2007,7 @@ pub async fn run_tool_call_loop(
                 parse_issue_detected || looks_like_deferred_action_without_tool_call(&display_text);
             let missing_tool_call_followthrough = !missing_tool_call_retry_used
                 && iteration + 1 < max_iterations
-                && !tool_specs.is_empty()
+                && !filtered_tool_specs.is_empty()
                 && missing_tool_call_signal;
             if missing_tool_call_followthrough {
                 missing_tool_call_retry_used = true;
@@ -1940,7 +2046,10 @@ pub async fn run_tool_call_loop(
                 continue;
             }
 
-            if missing_tool_call_retry_used && !tool_specs.is_empty() && missing_tool_call_signal {
+            if missing_tool_call_retry_used
+                && !filtered_tool_specs.is_empty()
+                && missing_tool_call_signal
+            {
                 runtime_trace::record_event(
                     "tool_call_followthrough_failed",
                     Some(channel_name),
@@ -2976,23 +3085,26 @@ pub async fn run(
                     ld_cfg,
                     TOOL_LOOP_CANARY_TOKENS_ENABLED.scope(
                         config.security.canary_tokens,
-                        run_tool_call_loop(
-                            provider.as_ref(),
-                            &mut history,
-                            &tools_registry,
-                            observer.as_ref(),
-                            provider_name,
-                            &model_name,
-                            temperature,
-                            false,
-                            approval_manager.as_ref(),
-                            channel_name,
-                            &config.multimodal,
-                            config.agent.max_tool_iterations,
-                            None,
-                            None,
-                            effective_hooks,
-                            &[],
+                        TOOL_FILTER_GROUPS.scope(
+                            config.agent.tool_filter_groups.clone(),
+                            run_tool_call_loop(
+                                provider.as_ref(),
+                                &mut history,
+                                &tools_registry,
+                                observer.as_ref(),
+                                provider_name,
+                                &model_name,
+                                temperature,
+                                false,
+                                approval_manager.as_ref(),
+                                channel_name,
+                                &config.multimodal,
+                                config.agent.max_tool_iterations,
+                                None,
+                                None,
+                                effective_hooks,
+                                &[],
+                            ),
                         ),
                     ),
                 ),
@@ -3205,23 +3317,26 @@ pub async fn run(
                         ld_cfg,
                         TOOL_LOOP_CANARY_TOKENS_ENABLED.scope(
                             config.security.canary_tokens,
-                            run_tool_call_loop(
-                                provider.as_ref(),
-                                &mut history,
-                                &tools_registry,
-                                observer.as_ref(),
-                                provider_name,
-                                &model_name,
-                                temperature,
-                                false,
-                                approval_manager.as_ref(),
-                                channel_name,
-                                &config.multimodal,
-                                config.agent.max_tool_iterations,
-                                None,
-                                None,
-                                effective_hooks,
-                                &[],
+                            TOOL_FILTER_GROUPS.scope(
+                                config.agent.tool_filter_groups.clone(),
+                                run_tool_call_loop(
+                                    provider.as_ref(),
+                                    &mut history,
+                                    &tools_registry,
+                                    observer.as_ref(),
+                                    provider_name,
+                                    &model_name,
+                                    temperature,
+                                    false,
+                                    approval_manager.as_ref(),
+                                    channel_name,
+                                    &config.multimodal,
+                                    config.agent.max_tool_iterations,
+                                    None,
+                                    None,
+                                    effective_hooks,
+                                    &[],
+                                ),
                             ),
                         ),
                     ),
@@ -7614,5 +7729,115 @@ Let me check the result."#;
         let completed = tracker.render_delta();
         assert!(completed.contains("✅ shell (2s)"));
         assert!(completed.contains("❌ web_search (1s)"));
+    }
+
+    // ── tool_filter_groups tests ──────────────────────────────────────────
+
+    fn make_spec(name: &str) -> crate::tools::ToolSpec {
+        crate::tools::ToolSpec {
+            name: name.to_string(),
+            description: String::new(),
+            parameters: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn filter_tool_specs_no_groups_returns_all() {
+        let specs = vec![
+            make_spec("shell"),
+            make_spec("mcp_vikunja_list_tasks"),
+            make_spec("mcp_browser_navigate"),
+        ];
+        let result = filter_tool_specs_for_turn(&specs, &[], "anything");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn filter_tool_specs_always_group_includes_matching_mcp_tool() {
+        use crate::config::schema::{ToolFilterGroup, ToolFilterGroupMode};
+        let specs = vec![
+            make_spec("shell"),
+            make_spec("mcp_vikunja_list_tasks"),
+            make_spec("mcp_browser_navigate"),
+        ];
+        let groups = vec![ToolFilterGroup {
+            mode: ToolFilterGroupMode::Always,
+            tools: vec!["mcp_vikunja_*".to_string()],
+            keywords: vec![],
+        }];
+        let result = filter_tool_specs_for_turn(&specs, &groups, "unrelated message");
+        // built-in "shell" always passes; mcp_vikunja_* matches always group;
+        // mcp_browser_navigate has no matching group → excluded.
+        let names: Vec<&str> = result.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"shell"), "built-in tool must pass through");
+        assert!(
+            names.contains(&"mcp_vikunja_list_tasks"),
+            "always group match must be included"
+        );
+        assert!(
+            !names.contains(&"mcp_browser_navigate"),
+            "unmatched MCP tool must be excluded"
+        );
+    }
+
+    #[test]
+    fn filter_tool_specs_dynamic_group_included_on_keyword_match() {
+        use crate::config::schema::{ToolFilterGroup, ToolFilterGroupMode};
+        let specs = vec![make_spec("mcp_browser_navigate")];
+        let groups = vec![ToolFilterGroup {
+            mode: ToolFilterGroupMode::Dynamic,
+            tools: vec!["mcp_browser_*".to_string()],
+            keywords: vec!["browse".to_string()],
+        }];
+        let result = filter_tool_specs_for_turn(&specs, &groups, "please browse to example.com");
+        assert_eq!(result.len(), 1, "keyword match should include the tool");
+    }
+
+    #[test]
+    fn filter_tool_specs_dynamic_group_excluded_on_no_keyword_match() {
+        use crate::config::schema::{ToolFilterGroup, ToolFilterGroupMode};
+        let specs = vec![make_spec("mcp_browser_navigate")];
+        let groups = vec![ToolFilterGroup {
+            mode: ToolFilterGroupMode::Dynamic,
+            tools: vec!["mcp_browser_*".to_string()],
+            keywords: vec!["browse".to_string()],
+        }];
+        let result = filter_tool_specs_for_turn(&specs, &groups, "list my tasks");
+        assert!(
+            result.is_empty(),
+            "no keyword match should exclude the tool"
+        );
+    }
+
+    #[test]
+    fn filter_tool_specs_dynamic_keyword_match_is_case_insensitive() {
+        use crate::config::schema::{ToolFilterGroup, ToolFilterGroupMode};
+        let specs = vec![make_spec("mcp_browser_navigate")];
+        let groups = vec![ToolFilterGroup {
+            mode: ToolFilterGroupMode::Dynamic,
+            tools: vec!["mcp_browser_*".to_string()],
+            keywords: vec!["BROWSE".to_string()],
+        }];
+        let result = filter_tool_specs_for_turn(&specs, &groups, "please Browse to example.com");
+        assert_eq!(result.len(), 1, "keyword match must be case-insensitive");
+    }
+
+    #[test]
+    fn glob_match_prefix_wildcard() {
+        assert!(glob_match("mcp_vikunja_*", "mcp_vikunja_list_tasks"));
+        assert!(glob_match("mcp_vikunja_*", "mcp_vikunja_"));
+        assert!(!glob_match("mcp_vikunja_*", "mcp_browser_navigate"));
+    }
+
+    #[test]
+    fn glob_match_exact_no_wildcard() {
+        assert!(glob_match("shell", "shell"));
+        assert!(!glob_match("shell", "shell_extra"));
+    }
+
+    #[test]
+    fn glob_match_star_matches_everything() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*", "mcp_vikunja_list_tasks"));
     }
 }

@@ -131,6 +131,7 @@ Operational note for container users:
 | `tool_dispatcher` | `auto` | Tool dispatch strategy |
 | `allowed_tools` | `[]` | Primary-agent tool allowlist. When non-empty, only listed tools are exposed in context |
 | `denied_tools` | `[]` | Primary-agent tool denylist applied after `allowed_tools` |
+| `tool_filter_groups` | `[]` | Per-turn MCP tool schema filter groups (see below) |
 | `loop_detection_no_progress_threshold` | `3` | Same tool+args producing identical output this many times triggers loop detection. `0` disables |
 | `loop_detection_ping_pong_cycles` | `2` | A→B→A→B alternating pattern cycle count threshold. `0` disables |
 | `loop_detection_failure_streak` | `3` | Same tool consecutive failure count threshold. `0` disables |
@@ -145,6 +146,36 @@ Notes:
 - Unknown entries in `allowed_tools` are skipped and logged at debug level.
 - If both `allowed_tools` and `denied_tools` are configured and the denylist removes all allowlisted matches, startup fails fast with a clear config error.
 - **Loop detection** intervenes before `max_tool_iterations` is exhausted. On first detection the agent receives a self-correction prompt; if the loop persists the agent is stopped early. Detection is result-aware: repeated calls with *different* outputs (genuine progress) do not trigger. Set any threshold to `0` to disable that detector.
+
+### `tool_filter_groups`
+
+Reduces per-turn token overhead by limiting which MCP tool schemas are sent to the LLM on each turn. Built-in (non-MCP) tools always pass through unchanged.
+
+Each entry is a table with:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `mode` | `"always"` \| `"dynamic"` | `always`: tool is included unconditionally. `dynamic`: tool is included only when the user message contains a keyword. |
+| `tools` | `[string]` | Tool name patterns. Single `*` wildcard supported (prefix/suffix/infix), e.g. `"mcp_vikunja_*"`. |
+| `keywords` | `[string]` | (Dynamic only) Case-insensitive substrings matched against the last user message. |
+
+When `tool_filter_groups` is empty the feature is inactive and all tools pass through (backward-compatible default).
+
+Example:
+
+```toml
+[agent]
+# Vikunja task-management MCP tools are always available.
+[[agent.tool_filter_groups]]
+mode = "always"
+tools = ["mcp_vikunja_*"]
+
+# Browser MCP tools are only included when the user message mentions browsing.
+[[agent.tool_filter_groups]]
+mode = "dynamic"
+tools = ["mcp_browser_*"]
+keywords = ["browse", "navigate", "open url", "screenshot"]
+```
 
 Example:
 
